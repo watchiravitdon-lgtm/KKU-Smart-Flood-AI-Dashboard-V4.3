@@ -1,0 +1,65 @@
+{
+  "accuracy": 0.9866666666666667,
+  "n_estimators": 150,
+  "max_depth": 8,
+  "total_rows": 1500,
+  "train_rows": 1200,
+  "test_rows": 300,
+  "dataset_type": "synthetic",
+  "warning": "Metrics are not evidence of real-world flood prediction accuracy.",
+  "classes": [
+    "HIGH",
+    "LOW",
+    "MEDIUM"
+  ],
+  "classification_report": {
+    "HIGH": {
+      "precision": 0.9957081545064378,
+      "recall": 1.0,
+      "f1-score": 0.9978494623655914,
+      "support": 232.0
+    },
+    "LOW": {
+      "precision": 0.875,
+      "recall": 0.7777777777777778,
+      "f1-score": 0.8235294117647058,
+      "support": 9.0
+    },
+    "MEDIUM": {
+      "precision": 0.9661016949152542,
+      "recall": 0.9661016949152542,
+      "f1-score": 0.9661016949152542,
+      "support": 59.0
+    },
+    "accuracy": 0.9866666666666667,
+    "macro avg": {
+      "precision": 0.9456032831405641,
+      "recall": 0.9146264908976773,
+      "f1-score": 0.9291601896818505,
+      "support": 300.0
+    },
+    "weighted avg": {
+      "precision": 0.9862643061516451,
+      "recall": 0.9866666666666667,
+      "f1-score": 0.9863761332489984,
+      "support": 300.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      232,
+      0,
+      0
+    ],
+    [
+      0,
+      7,
+      2
+    ],
+    [
+      1,
+      1,
+      57
+    ]
+  ]
+}
