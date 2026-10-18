@@ -82,7 +82,14 @@ if stations:
     dfst = pd.DataFrame(stations)
     showcols = [c for c in ["station_name","province","water_level","situation","rain_1h","rain_24h","updated_at","source_url"] if c in dfst.columns]
     st.dataframe(dfst[showcols], use_container_width=True, hide_index=True,
-                 column_config={"source_url":st.column_config.LinkColumn("แหล่งข้อมูลสถานี", display_text="เปิดแหล่งข้อมูล ↗")})
+                 column_config={
+                     "source_url": st.column_config.LinkColumn(
+                         "รายละเอียดสถานี",
+                         display_text="ค้นหาสถานีบน THDATA ↗",
+                         help="เปิดผลค้นหาชื่อสถานีและจังหวัดบน THDATA เพื่อหลีกเลี่ยงการเปิด JSON API ดิบหรือใช้รหัสสถานีผิด"
+                     )
+                 })
+    st.caption("ลิงก์อ้างอิงจะค้นหาด้วยชื่อสถานีและจังหวัดบน THDATA เพราะรหัสสถานีของ THDATA ไม่ใช่รหัสเดียวกับ ThaiWater API")
 else:
     st.info("ไม่พบข้อมูลสถานีสำหรับจังหวัดนี้จาก API หรือ API ยังไม่พร้อมให้บริการ ระบบจะไม่สร้างข้อมูลสถานีปลอม")
 st.caption("แหล่งข้อมูลสถานี: ThaiWater National Hydroinformatics Data Center")
