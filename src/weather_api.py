@@ -1,242 +1,253 @@
 # -*- coding: utf-8 -*-
-"""Weather APIs and geographic lookup. No synthetic station data is returned as live data."""
-from functools import lru_cache
-from urllib.parse import quote
-import requests
+"""KKU Smart Flood AI V3.3 — educational flood-risk dashboard."""
+from pathlib import Path
+from datetime import datetime
+import json
+import pandas as pd
+import streamlit as st
+import folium
+from streamlit_folium import st_folium
+import matplotlib.pyplot as plt
 
-# Approximate city-centre coordinates for common provinces; other provinces use Open-Meteo geocoding.
-PROVINCE_COORDINATES = {
-    "กรุงเทพมหานคร": {"lat": 13.7563, "lon": 100.5018}, "กระบี่": {"lat": 8.0863, "lon": 98.9063},
-    "กาญจนบุรี": {"lat": 14.0228, "lon": 99.5328}, "กาฬสินธุ์": {"lat": 16.4322, "lon": 103.5061},
-    "กำแพงเพชร": {"lat": 16.4828, "lon": 99.5227}, "ขอนแก่น": {"lat": 16.4322, "lon": 102.8236},
-    "จันทบุรี": {"lat": 12.6113, "lon": 102.1039}, "ฉะเชิงเทรา": {"lat": 13.6904, "lon": 101.0779},
-    "ชลบุรี": {"lat": 13.3611, "lon": 100.9847}, "ชัยนาท": {"lat": 15.1852, "lon": 100.1251},
-    "ชัยภูมิ": {"lat": 15.8068, "lon": 102.0315}, "ชุมพร": {"lat": 10.4930, "lon": 99.1800},
-    "เชียงราย": {"lat": 19.9072, "lon": 99.8309}, "เชียงใหม่": {"lat": 18.7883, "lon": 98.9853},
-    "ตรัง": {"lat": 7.5594, "lon": 99.6114}, "ตราด": {"lat": 12.2428, "lon": 102.5175},
-    "ตาก": {"lat": 16.8839, "lon": 99.1258}, "นครนายก": {"lat": 14.2069, "lon": 101.2131},
-    "นครปฐม": {"lat": 13.8199, "lon": 100.0622}, "นครพนม": {"lat": 17.3920, "lon": 104.7696},
-    "นครราชสีมา": {"lat": 14.9799, "lon": 102.0978}, "นครศรีธรรมราช": {"lat": 8.4304, "lon": 99.9631},
-    "นครสวรรค์": {"lat": 15.7047, "lon": 100.1372}, "นนทบุรี": {"lat": 13.8621, "lon": 100.5144},
-    "นราธิวาส": {"lat": 6.4255, "lon": 101.8253}, "น่าน": {"lat": 18.7756, "lon": 100.7730},
-    "บึงกาฬ": {"lat": 18.3609, "lon": 103.6464}, "บุรีรัมย์": {"lat": 14.9930, "lon": 103.1029},
-    "ปทุมธานี": {"lat": 14.0208, "lon": 100.5250}, "ประจวบคีรีขันธ์": {"lat": 11.8126, "lon": 99.7970},
-    "ปราจีนบุรี": {"lat": 14.0500, "lon": 101.3728}, "ปัตตานี": {"lat": 6.8681, "lon": 101.2505},
-    "พระนครศรีอยุธยา": {"lat": 14.3532, "lon": 100.5689}, "พะเยา": {"lat": 19.1664, "lon": 99.9019},
-    "พังงา": {"lat": 8.4509, "lon": 98.5253}, "พัทลุง": {"lat": 7.6167, "lon": 100.0740},
-    "พิจิตร": {"lat": 16.4419, "lon": 100.3488}, "พิษณุโลก": {"lat": 16.8211, "lon": 100.2659},
-    "เพชรบุรี": {"lat": 13.1119, "lon": 99.9447}, "เพชรบูรณ์": {"lat": 16.4189, "lon": 101.1550},
-    "แพร่": {"lat": 18.1446, "lon": 100.1403}, "ภูเก็ต": {"lat": 7.8804, "lon": 98.3922},
-    "มหาสารคาม": {"lat": 16.1840, "lon": 103.3007}, "มุกดาหาร": {"lat": 16.5424, "lon": 104.7235},
-    "แม่ฮ่องสอน": {"lat": 19.3013, "lon": 97.9654}, "ยโสธร": {"lat": 15.7926, "lon": 104.1453},
-    "ยะลา": {"lat": 6.5411, "lon": 101.2804}, "ร้อยเอ็ด": {"lat": 16.0567, "lon": 103.6531},
-    "ระนอง": {"lat": 9.9658, "lon": 98.6348}, "ระยอง": {"lat": 12.6814, "lon": 101.2816},
-    "ราชบุรี": {"lat": 13.5283, "lon": 99.8134}, "ลพบุรี": {"lat": 14.7995, "lon": 100.6534},
-    "ลำปาง": {"lat": 18.2888, "lon": 99.4909}, "ลำพูน": {"lat": 18.5745, "lon": 99.0087},
-    "เลย": {"lat": 17.4860, "lon": 101.7223}, "ศรีสะเกษ": {"lat": 15.1186, "lon": 104.3220},
-    "สกลนคร": {"lat": 17.1546, "lon": 104.1348}, "สงขลา": {"lat": 7.1898, "lon": 100.5954},
-    "สตูล": {"lat": 6.6238, "lon": 100.0674}, "สมุทรปราการ": {"lat": 13.5991, "lon": 100.5998},
-    "สมุทรสงคราม": {"lat": 13.4098, "lon": 100.0023}, "สมุทรสาคร": {"lat": 13.5475, "lon": 100.2744},
-    "สระแก้ว": {"lat": 13.8240, "lon": 102.0646}, "สระบุรี": {"lat": 14.5289, "lon": 100.9101},
-    "สิงห์บุรี": {"lat": 14.8936, "lon": 100.3967}, "สุโขทัย": {"lat": 17.0078, "lon": 99.8230},
-    "สุพรรณบุรี": {"lat": 14.4745, "lon": 100.1177}, "สุราษฎร์ธานี": {"lat": 9.1382, "lon": 99.3217},
-    "สุรินทร์": {"lat": 14.8829, "lon": 103.4937}, "หนองคาย": {"lat": 17.8783, "lon": 102.7413},
-    "หนองบัวลำภู": {"lat": 17.2041, "lon": 102.4407}, "อ่างทอง": {"lat": 14.5896, "lon": 100.4551},
-    "อุดรธานี": {"lat": 17.4138, "lon": 102.7872}, "อุทัยธานี": {"lat": 15.3794, "lon": 100.0245},
-    "อุตรดิตถ์": {"lat": 17.6201, "lon": 100.0993}, "อุบลราชธานี": {"lat": 15.2287, "lon": 104.8564},
-    "อำนาจเจริญ": {"lat": 15.8657, "lon": 104.6258},
-}
+from src.weather_api import (
+    ALL_PROVINCES, fetch_thaiwater_data_v4, fetch_openmeteo_current,
+    fetch_openmeteo_forecast, get_province_coords
+)
+from src.prediction import predict_risk_v4, apply_realtime_safety_layer_v4
+from src.data_analysis import get_dataset_analysis_v4
 
-ALL_PROVINCES = sorted(PROVINCE_COORDINATES.keys())
+ROOT = Path(__file__).resolve().parent
+st.set_page_config(page_title="KKU Smart Flood AI V3.3", page_icon="🌊", layout="wide")
 
-@lru_cache(maxsize=128)
-def get_province_coords(province_name):
-    if province_name in PROVINCE_COORDINATES:
-        return PROVINCE_COORDINATES[province_name]
-    # Fail explicitly rather than silently using the same incorrect coordinates for every province.
-    raise ValueError(f"ไม่มีพิกัดจังหวัด {province_name!r} ในฐานข้อมูลพิกัด")
+st.markdown("""
+<style>
+.stApp { background:#0e1117; color:#f4f6fb; }
+.block-container { padding-top:1.6rem; max-width:1500px; }
+div[data-testid="stMetric"] { background:#171b24; border:1px solid #292f3b; padding:14px; border-radius:12px; }
+div[data-testid="stAlert"] { border-radius:10px; }
+h1,h2,h3 { letter-spacing:-.3px; }
+.small-muted { color:#9ca3af; font-size:.9rem; }
+</style>
+""", unsafe_allow_html=True)
 
+st.title("🌊 KKU Smart Flood AI")
+st.markdown("ระบบ AI สำหรับประเมินความเสี่ยงน้ำท่วมจากข้อมูลฝน ระดับน้ำ และสถานีตรวจวัด")
+st.info("V3 เชื่อมข้อมูล ThaiWater + Open-Meteo และแสดง Weather Forecast 7 วันตามจังหวัดที่เลือก พร้อม Real-time Water Safety Layer")
 
-def get_wmo_weather_desc(code):
-    mapping = {0:"ท้องฟ้าแจ่มใส",1:"ท้องฟ้าโปร่ง",2:"ครึ้มบางส่วน",3:"ท้องฟ้าครึ้ม",45:"มีหมอก",48:"มีหมอกน้ำค้างแข็ง",51:"ฝนละอองเบาบาง",53:"ฝนละอองปานกลาง",55:"ฝนละอองหนาแน่น",61:"ฝนตกเล็กน้อย",63:"ฝนตกปานกลาง",65:"ฝนตกหนัก",80:"ฝนซู่เล็กน้อย",81:"ฝนซู่ปานกลาง",82:"ฝนซู่รุนแรง",95:"พายุฝนฟ้าคะนอง",96:"พายุฝนฟ้าคะนองและลูกเห็บ",99:"พายุฝนฟ้าคะนองรุนแรง"}
-    return mapping.get(code, "ไม่ทราบสภาพอากาศ")
+if "history_v4" not in st.session_state:
+    st.session_state.history_v4 = []
 
+# 1) Province and data refresh
+st.header("1. เลือกจังหวัดและอัปเดตข้อมูล API")
+selected_province = st.selectbox("จังหวัดของพื้นที่ที่ต้องการวิเคราะห์ (77 จังหวัด)", ALL_PROVINCES,
+                                 index=ALL_PROVINCES.index("กรุงเทพมหานคร") if "กรุงเทพมหานคร" in ALL_PROVINCES else 0)
+if st.button("🔄 อัปเดตข้อมูล ThaiWater + สภาพอากาศ", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
 
-THAIWATER_BASE = "https://api-v3.thaiwater.net/api/v1/thaiwater30"
-THAIWATER_WATER_URL = f"{THAIWATER_BASE}/public/waterlevel_load"
-THAIWATER_RAIN_URL = f"{THAIWATER_BASE}/public/rain_24h"
+with st.spinner("กำลังโหลดข้อมูลจาก ThaiWater และ Open-Meteo..."):
+    water = fetch_thaiwater_data_v4(selected_province)
+    weather = fetch_openmeteo_current(selected_province)
+    forecast = fetch_openmeteo_forecast(selected_province)
 
+def metric_value(value, unit="", digits=1):
+    return "ไม่มีข้อมูล" if value is None else f"{value:.{digits}f}{unit}"
 
-def _records_from_payload(payload):
-    """Extract station-like records from ThaiWater JSON without assuming one envelope."""
-    found = []
-    def walk(node):
-        if isinstance(node, dict):
-            station = node.get("station")
-            geocode = node.get("geocode")
-            if isinstance(station, dict) and (isinstance(geocode, dict) or any(k in node for k in ("waterlevel_m", "waterlevel_msl", "rain_24h", "rain_1h"))):
-                found.append(node)
-            for value in node.values():
-                if isinstance(value, (dict, list)):
-                    walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                walk(value)
-    walk(payload)
-    # avoid duplicate object references
-    unique = []
-    seen = set()
-    for row in found:
-        key = id(row)
-        if key not in seen:
-            seen.add(key); unique.append(row)
-    return unique
+m1,m2,m3,m4 = st.columns(4)
+m1.metric("ฝน 1 ชม.", metric_value(water.get("rain_1h"), " mm"))
+m2.metric("ฝน 24 ชม.", metric_value(water.get("rain_24h"), " mm"))
+m3.metric("ฝนสะสม 3 วัน", metric_value(water.get("rain_3d"), " mm"))
+m4.metric("ฝนสะสม 7 วัน", metric_value(water.get("rain_7d"), " mm"))
+m5,m6,m7,m8 = st.columns(4)
+m5.metric("ระดับน้ำสูงสุด", metric_value(water.get("max_water_level"), " m"))
+trend = water.get("water_trend")
+m6.metric("แนวโน้มระดับน้ำ", trend if isinstance(trend,str) else metric_value(trend, " m"))
+m7.metric("สถานีล้นตลิ่ง", int(water.get("overbank_count",0)))
+m8.metric("สถานีเตือน/วิกฤต", int(water.get("warning_critical_count",0)))
 
+if water.get("updated_at"):
+    st.caption(f"ThaiWater: {water.get('station_count',0)} สถานีระดับน้ำ | อัปเดตข้อมูลเมื่อ {water['updated_at']}")
+else:
+    st.caption(f"แหล่งข้อมูลสถานี: {water.get('source','ThaiWater')} | ไม่มีเวลารายงานจาก API")
+if water.get("overbank_count",0) > 0:
+    st.warning(f"⚠️ พบสถานีระดับน้ำล้นตลิ่ง {water['overbank_count']} สถานี")
+elif water.get("warning_critical_count",0) > 0:
+    st.warning(f"⚠️ พบสถานีเตือน/วิกฤต {water['warning_critical_count']} สถานี")
+if water.get("error"):
+    st.warning(f"ไม่สามารถโหลดข้อมูลสถานีบางส่วนได้: {water['error']}")
 
-def _th(value):
-    if isinstance(value, dict):
-        return value.get("th") or value.get("en") or ""
-    return value if isinstance(value, str) else ""
+st.subheader("สถานีระดับน้ำล่าสุด")
+stations = water.get("stations_list", [])
+if stations:
+    dfst = pd.DataFrame(stations)
+    showcols = [c for c in ["station_name","province","water_level","situation","rain_1h","rain_24h","updated_at","source_url"] if c in dfst.columns]
+    st.dataframe(dfst[showcols], use_container_width=True, hide_index=True,
+                 column_config={
+                     "source_url": st.column_config.LinkColumn(
+                         "รายละเอียดสถานี",
+                         display_text="ค้นหาสถานีบน THDATA ↗",
+                         help="เปิดผลค้นหาชื่อสถานีและจังหวัดบน THDATA เพื่อหลีกเลี่ยงการเปิด JSON API ดิบหรือใช้รหัสสถานีผิด"
+                     )
+                 })
+    st.caption("ลิงก์อ้างอิงจะค้นหาด้วยชื่อสถานีและจังหวัดบน THDATA เพราะรหัสสถานีของ THDATA ไม่ใช่รหัสเดียวกับ ThaiWater API")
+else:
+    st.info("ไม่พบข้อมูลสถานีสำหรับจังหวัดนี้จาก API หรือ API ยังไม่พร้อมให้บริการ ระบบจะไม่สร้างข้อมูลสถานีปลอม")
+st.caption("แหล่งข้อมูลสถานี: ThaiWater National Hydroinformatics Data Center")
+st.markdown("[เปิดเว็บไซต์ ThaiWater](https://www.thaiwater.net/) · [API ระดับน้ำสาธารณะ](https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_load) · [API ฝน 24 ชั่วโมง](https://api-v3.thaiwater.net/api/v1/thaiwater30/public/rain_24h)")
 
+# 2) Forecast
+st.header("🌤️ Weather Forecast 7 วัน")
+st.caption(f"เริ่มจากวันนี้ • จังหวัด {selected_province} • ข้อมูลพยากรณ์จาก Open-Meteo")
+if forecast:
+    days = st.columns(min(7,len(forecast)))
+    for i, day in enumerate(forecast[:7]):
+        with days[i]:
+            st.markdown(f"**{day['date']}**")
+            st.markdown(f"### {day['weather_desc']}")
+            if day.get("temp_max") is not None and day.get("temp_min") is not None:
+                st.metric("อุณหภูมิ", f"{day['temp_max']}° / {day['temp_min']}°C")
+            if day.get("precip_sum") is not None:
+                st.write(f"🌧️ ฝน {day['precip_sum']} mm")
+            if day.get("precip_prob") is not None:
+                st.write(f"โอกาสฝน {day['precip_prob']}%")
+else:
+    st.warning("ไม่สามารถโหลดพยากรณ์ 7 วันจาก Open-Meteo ได้ในขณะนี้")
 
-def _province(row):
-    geo = row.get("geocode") or {}
-    return _th(geo.get("province_name")) or _th(row.get("province_name"))
+# 3) Rain map
+st.header("🗺️ แผนที่สถานีฝนและระดับน้ำ")
+coords = get_province_coords(selected_province)
+map_obj = folium.Map(location=[coords["lat"],coords["lon"]], zoom_start=7, tiles="OpenStreetMap")
+for row in stations:
+    if row.get("lat") is None or row.get("lon") is None:
+        continue
+    color = "red" if row.get("overbank") else ("orange" if row.get("critical") else "blue")
+    popup = f"{row.get('station_name','สถานี')}<br>ระดับน้ำ: {row.get('water_level','ไม่มีข้อมูล')} m<br>สถานะ: {row.get('situation','ไม่ระบุ')}"
+    folium.CircleMarker([row["lat"],row["lon"]], radius=7, color=color, fill=True, fill_opacity=.8,
+                        popup=folium.Popup(popup, max_width=300)).add_to(map_obj)
+folium.Marker([coords["lat"],coords["lon"]], tooltip=f"พิกัดอ้างอิงจังหวัด {selected_province}",
+              icon=folium.Icon(color="cadetblue",icon="info-sign")).add_to(map_obj)
+st_folium(map_obj, use_container_width=True, height=430, returned_objects=[])
+st.caption(f"แสดงสถานี ThaiWater ที่มีพิกัดในจังหวัด {selected_province} เท่านั้น จุดอ้างอิงจังหวัดใช้พิกัดโดยประมาณ")
 
-
-def _station_name(row):
-    station = row.get("station") or {}
-    return _th(station.get("tele_station_name")) or _th(row.get("station_name")) or "ไม่ระบุชื่อสถานี"
-
-
-def _number(value):
+# 4) Risk model
+st.header("2. AI Flood Risk Analysis")
+st.caption(f"จังหวัดที่วิเคราะห์: {selected_province} | อ้างอิงข้อมูลล่าสุด: {water.get('updated_at') or 'ไม่ระบุ'}")
+default_rain = float(weather.get("precipitation") or water.get("rain_24h") or 0)
+default_humidity = float(weather.get("humidity") or 60)
+default_temp = float(weather.get("temperature") or 30)
+default_level = float(water.get("max_water_level") or 0)
+with st.expander("ปรับค่าตัวแปรสำหรับวิเคราะห์", expanded=False):
+    c1,c2,c3,c4 = st.columns(4)
+    rain_in = c1.number_input("ฝน (mm)", min_value=0.0, max_value=1000.0, value=default_rain, step=1.0)
+    level_in = c2.number_input("ระดับน้ำ (m)", min_value=0.0, max_value=30.0, value=default_level, step=.1)
+    humid_in = c3.number_input("ความชื้น (%)", min_value=0.0, max_value=100.0, value=default_humidity, step=1.0)
+    temp_in = c4.number_input("อุณหภูมิ (°C)", min_value=-10.0, max_value=60.0, value=default_temp, step=1.0)
+if st.button("🔎 วิเคราะห์ซ้ำจากข้อมูลจังหวัดนี้", type="primary"):
     try:
-        if value is None or value == "":
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+        model_pred, probs, model_source = predict_risk_v4(rain_in, level_in, humid_in, temp_in)
+        final_pred, safety_reason = apply_realtime_safety_layer_v4(model_pred, water)
+        reasons = [safety_reason] if safety_reason else []
+        st.session_state.last_analysis = {"province":selected_province,"model_pred":model_pred,"final_pred":final_pred,
+            "probs":probs,"model_source":model_source,"reasons":reasons,"time":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "rain":rain_in,"level":level_in,"humidity":humid_in,"temperature":temp_in}
+        st.session_state.history_v4.insert(0, st.session_state.last_analysis.copy())
+    except Exception as exc:
+        st.error(f"วิเคราะห์ไม่สำเร็จ: {exc}")
 
+result = st.session_state.get("last_analysis")
+if result:
+    label = result["final_pred"]
+    if label == "HIGH":
+        st.error(f"ผลการประเมินจังหวัด{result['province']}: 🔴 ความเสี่ยงสูง")
+    elif label == "MEDIUM":
+        st.warning(f"ผลการประเมินจังหวัด{result['province']}: 🟠 ความเสี่ยงปานกลาง")
+    else:
+        st.success(f"ผลการประเมินจังหวัด{result['province']}: 🟢 ความเสี่ยงต่ำ")
+    if result["model_pred"] != label:
+        st.info(f"AI Model เดิมประเมิน {result['model_pred']} แต่ Real-time Water Safety Layer ปรับเป็น {label} จากข้อมูลสถานี")
+    if result.get("reasons"):
+        st.markdown("**เหตุผลจากข้อมูลปัจจุบัน:**")
+        for reason in result["reasons"]:
+            st.write(f"• {reason}")
+    if result.get("probs"):
+        p = result["probs"]
+        st.subheader("ความน่าจะเป็นจากโมเดล (ก่อน Safety Layer)")
+        pc = st.columns(3)
+        for col, key in zip(pc, ["LOW","MEDIUM","HIGH"]):
+            col.metric(key, f"{100*p.get(key,0):.2f}%")
+else:
+    st.info("กดปุ่มวิเคราะห์เพื่อประเมินความเสี่ยง ระบบจะไม่สรุปผลโดยไม่มีการเรียกวิเคราะห์")
 
-# THDATA provides human-readable station pages, unlike the raw ThaiWater JSON API.
-# Its station IDs are independent of ThaiWater station IDs, so do not construct
-# /station/{ThaiWater id} (that would open the wrong station). Use a station-name
-# search scoped to THDATA as a safe reference link when IDs cannot be cross-mapped.
-def _station_reference_url(station_name, province_name):
-    query = quote(f'site:water.thdata.co/station "{station_name}" "{province_name}"')
-    return f"https://www.google.com/search?q={query}"
-
-
-def fetch_thaiwater_data_v4(province_name):
-    """Fetch public ThaiWater water-level and 24h rainfall endpoints; never fabricate readings."""
-    result = {"source": "ThaiWater API", "source_url": THAIWATER_WATER_URL,
-              "rain_1h": None, "rain_24h": None, "rain_3d": None, "rain_7d": None,
-              "max_water_level": None, "water_trend": "ไม่มีข้อมูลสถานี",
-              "overbank_count": 0, "warning_critical_count": 0, "stations_list": [],
-              "station_count": 0, "updated_at": None, "error": None}
-    errors = []
-    water_rows, rain_rows = [], []
+# 5) model performance and importance
+st.header("3. AI Model Performance")
+metrics_path = ROOT / "models" / "model_metrics.json"
+metrics = {}
+if metrics_path.exists():
     try:
-        response = requests.get(THAIWATER_WATER_URL, headers={"Accept":"application/json","User-Agent":"KKU-Smart-Flood-AI/3.3"}, timeout=15)
-        response.raise_for_status()
-        water_rows = _records_from_payload(response.json())
-    except (requests.RequestException, ValueError, TypeError) as exc:
-        errors.append(f"ระดับน้ำ: {exc}")
-    try:
-        response = requests.get(THAIWATER_RAIN_URL, headers={"Accept":"application/json","User-Agent":"KKU-Smart-Flood-AI/3.3"}, timeout=15)
-        response.raise_for_status()
-        rain_rows = _records_from_payload(response.json())
-    except (requests.RequestException, ValueError, TypeError) as exc:
-        errors.append(f"ฝน 24 ชม.: {exc}")
+        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        metrics = {}
+if metrics:
+    a,b,c = st.columns(3)
+    accuracy = metrics.get("accuracy")
+    a.metric("Model Accuracy", f"{accuracy*100:.2f}%" if isinstance(accuracy,(int,float)) else "ไม่มีข้อมูล")
+    b.metric("Decision Trees", metrics.get("n_estimators","ไม่มีข้อมูล"))
+    c.metric("Training Dataset", metrics.get("total_rows","ไม่มีข้อมูล"))
+else:
+    st.info("ยังไม่มีไฟล์ metrics จากการฝึกโมเดล จึงไม่แสดงค่าความแม่นยำที่คาดเดา")
+st.caption("Accuracy มาจาก Synthetic Prototype Dataset ไม่ใช่ความแม่นยำที่ผ่านการรับรองจากข้อมูลน้ำท่วมจริง")
 
-    def province_match(row):
-        name = _province(row).replace("จังหวัด","").strip()
-        return name == province_name or (province_name == "กรุงเทพมหานคร" and name in ("กรุงเทพมหานคร","กรุงเทพ"))
+st.header("4. AI Feature Importance")
+try:
+    img = ROOT / "images" / "feature_importance.png"
+    if img.exists():
+        st.image(str(img), use_container_width=True)
+    else:
+        st.info("ยังไม่มีกราฟ Feature Importance — รัน python train_model.py เพื่อสร้าง")
+except Exception:
+    st.info("ไม่สามารถอ่านกราฟ Feature Importance ได้")
 
-    water_rows = [r for r in water_rows if province_match(r)]
-    rain_rows = [r for r in rain_rows if province_match(r)]
+# 6) Dataset analysis
+st.header("5. วิเคราะห์ข้อมูล")
+sample, counts = get_dataset_analysis_v4()
+left,right = st.columns([1,1])
+with left:
+    st.subheader("จำนวนข้อมูลแต่ละระดับ")
+    if counts:
+        st.bar_chart(pd.Series(counts, name="จำนวนข้อมูล"))
+    else:
+        st.info("ไม่พบชุดข้อมูลฝึก")
+with right:
+    st.subheader("ตัวอย่าง Training Dataset")
+    if sample is not None:
+        st.dataframe(sample, use_container_width=True, hide_index=True)
+    else:
+        st.info("ยังไม่มีไฟล์ data/flood_data.csv")
 
-    rain_by_station = {}
-    for row in rain_rows:
-        rain_by_station[_station_name(row)] = row
+# 7) History
+st.header("6. ประวัติการวิเคราะห์")
+if st.button("🗑️ ล้างประวัติ"):
+    st.session_state.history_v4 = []
+    st.rerun()
+if st.session_state.history_v4:
+    hist = pd.DataFrame(st.session_state.history_v4)
+    keep = [c for c in ["time","province","rain","level","humidity","temperature","model_pred","final_pred","model_source"] if c in hist.columns]
+    st.dataframe(hist[keep], use_container_width=True, hide_index=True)
+else:
+    st.caption("ยังไม่มีประวัติการวิเคราะห์ใน Session นี้")
 
-    stations = []
-    for row in water_rows:
-        station = row.get("station") or {}
-        level = _number(row.get("waterlevel_msl"))
-        if level is None:
-            level = _number(row.get("waterlevel_m"))
-        situation_level = _number(row.get("situation_level"))
-        bank_text = str(row.get("diff_wl_bank_text") or "")
-        overbank = bank_text.startswith("ล้นตลิ่ง") or situation_level == 5
-        critical = situation_level in (3,4,5)
-        rainrow = rain_by_station.get(_station_name(row), {})
-        lat = _number(station.get("latitude") or station.get("lat") or row.get("latitude"))
-        lon = _number(station.get("longitude") or station.get("lon") or row.get("longitude"))
-        measured = row.get("waterlevel_datetime") or row.get("datetime") or row.get("updated_at") or row.get("data_datetime")
-        stations.append({
-            "station_name": _station_name(row), "province": _province(row),
-            "water_level": level, "situation": {1:"ปกติ",2:"เฝ้าระวัง",3:"เตือนภัย",4:"วิกฤต",5:"ล้นตลิ่ง"}.get(int(situation_level) if situation_level is not None else -1, "ไม่ระบุ"),
-            "rain_1h": _number(rainrow.get("rain_1h")), "rain_24h": _number(rainrow.get("rain_24h")),
-            "updated_at": measured, "lat": lat, "lon": lon, "overbank": overbank, "critical": critical,
-            "source_url": _station_reference_url(_station_name(row), _province(row)),
-            "api_source_url": THAIWATER_WATER_URL,
-            "station_id": station.get("id"),
-            "station_code": station.get("tele_station_oldcode")
-        })
-    result["stations_list"] = stations
-    result["station_count"] = len(stations)
-    levels = [r["water_level"] for r in stations if r["water_level"] is not None]
-    result["max_water_level"] = max(levels) if levels else None
-    result["overbank_count"] = sum(bool(r["overbank"]) for r in stations)
-    result["warning_critical_count"] = sum(bool(r["critical"]) for r in stations)
-    timestamps = [r["updated_at"] for r in stations if r.get("updated_at")]
-    result["updated_at"] = max(timestamps) if timestamps else None
-    rainfall_values = [r.get("rain_24h") for r in rain_rows if _number(r.get("rain_24h")) is not None]
-    rain1_values = [r.get("rain_1h") for r in rain_rows if _number(r.get("rain_1h")) is not None]
-    result["rain_24h"] = max(map(float, rainfall_values)) if rainfall_values else None
-    result["rain_1h"] = max(map(float, rain1_values)) if rain1_values else None
-    if len(levels) >= 2:
-        deltas = [_number(r.get("waterlevel_msl_previous")) for r in water_rows]
-        deltas = [v for v in deltas if v is not None]
-        result["water_trend"] = f"{sum(deltas)/len(deltas):+.2f} m" if deltas else "ไม่มีข้อมูลแนวโน้ม"
-    elif levels:
-        result["water_trend"] = "มีข้อมูลระดับน้ำ 1 สถานี"
-    if errors:
-        result["error"] = "; ".join(errors)
-    return result
+# 8) Sources and limits
+st.header("7. แหล่งข้อมูลและข้อจำกัด")
+st.markdown("""
+- **ThaiWater** — ข้อมูลฝนและระดับน้ำจากสถานีตรวจวัดของคลังข้อมูลน้ำแห่งชาติ
+- **Open-Meteo** — อุณหภูมิ ความชื้น สภาพอากาศปัจจุบัน และพยากรณ์ 7 วัน ณ พิกัดตัวแทนจังหวัด
+- **AI Model** — Random Forest ที่ฝึกด้วย Synthetic Prototype Dataset
+- **Real-time Water Safety Layer** — ตรวจสอบข้อมูลสถานี เช่น น้ำล้นตลิ่ง ระดับเตือน/วิกฤต และแนวโน้มระดับน้ำ
 
-def fetch_openmeteo_current(province_name):
-    coords = get_province_coords(province_name)
-    url = "https://api.open-meteo.com/v1/forecast"
-    try:
-        res = requests.get(url, params={"latitude":coords["lat"], "longitude":coords["lon"],
-            "current":"temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m", "timezone":"Asia/Bangkok"}, timeout=10)
-        res.raise_for_status()
-        current = res.json().get("current", {})
-        required = ["temperature_2m", "relative_humidity_2m", "precipitation", "wind_speed_10m"]
-        if any(current.get(k) is None for k in required):
-            raise ValueError("API ไม่ส่งค่าปัจจุบันครบถ้วน")
-        return {"available": True, "source":"Open-Meteo", "time":current.get("time"), "temperature":float(current["temperature_2m"]),
-                "humidity":float(current["relative_humidity_2m"]), "precipitation":float(current["precipitation"]), "wind_speed":float(current["wind_speed_10m"])}
-    except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
-        return {"available":False, "source":"Open-Meteo", "error":str(exc), "time":None, "temperature":None, "humidity":None, "precipitation":None, "wind_speed":None}
-
-
-def fetch_openmeteo_forecast(province_name):
-    coords = get_province_coords(province_name)
-    try:
-        res = requests.get("https://api.open-meteo.com/v1/forecast", params={"latitude":coords["lat"], "longitude":coords["lon"],
-            "daily":"weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max", "timezone":"Asia/Bangkok", "forecast_days":7}, timeout=10)
-        res.raise_for_status()
-        daily = res.json().get("daily", {})
-        rows=[]
-        for i, date in enumerate(daily.get("time", [])):
-            def val(key):
-                values=daily.get(key, [])
-                return values[i] if i < len(values) else None
-            rows.append({"date":date,"weather_desc":get_wmo_weather_desc(val("weather_code")),"temp_max":val("temperature_2m_max"),
-                "temp_min":val("temperature_2m_min"),"precip_sum":val("precipitation_sum"),"precip_prob":val("precipitation_probability_max"),"wind_speed_max":val("wind_speed_10m_max")})
-        return rows
-    except (requests.RequestException, ValueError, KeyError, TypeError):
-        return []
+ข้อจำกัด: โปรเจกต์นี้เป็นต้นแบบเพื่อการศึกษา โมเดลยังไม่ได้รับการตรวจสอบความแม่นยำด้วยข้อมูลน้ำท่วมจริงในระยะยาว จึงไม่ควรใช้แทนประกาศเตือนภัยจากหน่วยงานรัฐ
+""")
+st.warning("⚠️ ใช้เพื่อการศึกษาและพัฒนา Portfolio ไม่ใช่ระบบตัดสินใจด้านความปลอดภัยในสถานการณ์จริง")
+with st.expander("📊 สถิติการใช้งานเว็บไซต์"):
+    st.metric("จำนวนครั้งที่วิเคราะห์ใน Session นี้", len(st.session_state.history_v4))
+st.divider()
+st.caption("ผู้พัฒนา: นาย วชิรวิทย์ ดอนซุยแป · โรงเรียนพุทธิรังสีพิบูล · จังหวัดฉะเชิงเทรา · KKU Smart Flood AI V3.3")
