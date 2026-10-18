@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Weather APIs and geographic lookup. No synthetic station data is returned as live data."""
 from functools import lru_cache
+from urllib.parse import quote
 import requests
 
 # Approximate city-centre coordinates for common provinces; other provinces use Open-Meteo geocoding.
@@ -117,6 +118,15 @@ def _number(value):
         return None
 
 
+# THDATA provides human-readable station pages, unlike the raw ThaiWater JSON API.
+# Its station IDs are independent of ThaiWater station IDs, so do not construct
+# /station/{ThaiWater id} (that would open the wrong station). Use a station-name
+# search scoped to THDATA as a safe reference link when IDs cannot be cross-mapped.
+def _station_reference_url(station_name, province_name):
+    query = quote(f'site:water.thdata.co/station "{station_name}" "{province_name}"')
+    return f"https://www.google.com/search?q={query}"
+
+
 def fetch_thaiwater_data_v4(province_name):
     """Fetch public ThaiWater water-level and 24h rainfall endpoints; never fabricate readings."""
     result = {"source": "ThaiWater API", "source_url": THAIWATER_WATER_URL,
@@ -169,7 +179,10 @@ def fetch_thaiwater_data_v4(province_name):
             "water_level": level, "situation": {1:"ปกติ",2:"เฝ้าระวัง",3:"เตือนภัย",4:"วิกฤต",5:"ล้นตลิ่ง"}.get(int(situation_level) if situation_level is not None else -1, "ไม่ระบุ"),
             "rain_1h": _number(rainrow.get("rain_1h")), "rain_24h": _number(rainrow.get("rain_24h")),
             "updated_at": measured, "lat": lat, "lon": lon, "overbank": overbank, "critical": critical,
-            "source_url": THAIWATER_WATER_URL
+            "source_url": _station_reference_url(_station_name(row), _province(row)),
+            "api_source_url": THAIWATER_WATER_URL,
+            "station_id": station.get("id"),
+            "station_code": station.get("tele_station_oldcode")
         })
     result["stations_list"] = stations
     result["station_count"] = len(stations)
